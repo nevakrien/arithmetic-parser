@@ -65,7 +65,15 @@ impl<R :Read> Iterator for Lexer<R> {
 			
 		};
 		match c {
-			'\n' =>  Some(Token::Line(self.line())),
+			'\n' =>  {
+				while let Some(nc) = self.iter_char() {
+		            if !nc.is_whitespace() {
+		                self.cur_c = Some(nc);
+		                break;
+		            }
+		        }
+				Some(Token::Line(self.line()))
+			},
 			c if c.is_whitespace() => self.next(),
 
 			'+' => Some(Token::Plus),
@@ -112,7 +120,7 @@ mod tests {
 
     #[test]
     fn test_lexer() {
-        let input = "+ - / * ; # this is a comment\n 123 jjunkkk 456.78 ";
+        let input = "+ - / * ; # this is a comment\n  \n 123 jjunkkk 456.78 ";
         let mut lexer = create_lexer(input);
 
         let tokens: Vec<Token> = lexer.by_ref().collect();
@@ -124,7 +132,7 @@ mod tests {
         assert_eq!(tokens[3], Token::Mul);
         assert_eq!(tokens[4], Token::Ender);
         assert_eq!(tokens[5], Token::Comment(" this is a comment".to_string()));
-        assert_eq!(tokens[6], Token::Line(1));
+        assert_eq!(tokens[6], Token::Line(2));
         
         assert_eq!(tokens[7], Token::Num("123".to_string()));
         
