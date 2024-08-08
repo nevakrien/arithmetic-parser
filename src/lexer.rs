@@ -1,10 +1,15 @@
 use ::char_reader::CharReader;
 use std::io::Read;
 
+
 #[derive(Debug,PartialEq)]
 pub enum Token{
 	Unknowen(String),
 	Comment(String),
+
+	OpenPar,
+	ClosePar,
+
 	Plus,
 	Minus,
 	Div,
@@ -81,6 +86,8 @@ impl<R :Read> Iterator for Lexer<R> {
             '/' => Some(Token::Div),
             '*' => Some(Token::Mul),
             ';' => Some(Token::Ender),
+            '(' => Some(Token::OpenPar),
+            ')' => Some(Token::ClosePar),
             
             '#' => {
 		        let mut s = String::new();
@@ -120,12 +127,12 @@ mod tests {
 
     #[test]
     fn test_lexer() {
-        let input = "+ - / * ; # this is a comment\n  \n 123 jjunkkk 456.78 ";
+        let input = "+ - / * ; # this is a comment\n  \n 123 jjunkkk 456.78 ()";
         let mut lexer = create_lexer(input);
 
         let tokens: Vec<Token> = lexer.by_ref().collect();
 
-        assert_eq!(tokens.len(), 10);
+        assert_eq!(tokens.len(), 12);
         assert_eq!(tokens[0], Token::Plus);
         assert_eq!(tokens[1], Token::Minus);
         assert_eq!(tokens[2], Token::Div);
@@ -139,5 +146,8 @@ mod tests {
 
         assert_eq!(tokens[8], Token::Unknowen("jjunkkk".to_string()));
         assert_eq!(tokens[9], Token::Num("456.78".to_string()));
+
+         assert_eq!(tokens[10], Token::OpenPar);
+         assert_eq!(tokens[11], Token::ClosePar);
     }
 }
