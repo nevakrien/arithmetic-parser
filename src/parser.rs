@@ -161,8 +161,8 @@ pub enum AST {
 }
 
 struct ParserData<'a> {
-    root: Option<Box<AST>>, //if you pop root cur_statment may be stale...
-    cur_statement: Option<&'a mut Option<Box<AST>>>,
+    root: Option<Box<AST>>,
+    cur_statement: Option<&'a mut Option<Box<AST>>>, //unsafe when root is non (automatic reset in pop)
     line: u32,
     par_count: u32,
     build_state: Option<Box<BuildArith>>,
@@ -179,7 +179,7 @@ impl<'a> ParserData<'a>  {
         }
     }
 
-    fn append(&'a mut self,x:Arith ) {
+    fn append(&mut self,x:Arith ) {
     	let new_node = Box::new(AST::Statement(x, None));
 
     	match self.cur_statement.as_mut() {
@@ -191,32 +191,43 @@ impl<'a> ParserData<'a>  {
     		None => {
     			assert!(self.root.is_none());
 	    		self.root=Some(new_node);
-	    		self.cur_statement=Some(&mut self.root);
-    		}
+	    		
+	    		unsafe{
+	    			//getting around the 'a  lifetime requirment
+	    			let p = (&mut self.root) as *mut Option<Box<AST>>;
+	    			self.cur_statement=Some(&mut *p);
+    			}
+	    	}
+	    		
     	}
+        let next = {
+        	let first_mut_ref = self.cur_statement.take().unwrap().as_mut().unwrap();
+        	let AST::Statement(_, ref mut next) = **first_mut_ref;
+        	next
 
-        unsafe{
-        	//self.cur_statement holds itself and its next
-        	//so to get a &mut to next we need them both to exist together in the same scope
-        	//which is a double mutble borrow
-        	//we will get around that with raw pointers.
+        };
 
+        self.cur_statement = Some(next);
+    	
+	}
 
-	        let next = {
-	        	let first_mut_ref = self.cur_statement.as_mut().unwrap().as_mut().unwrap();
-	        	let AST::Statement(_, ref mut next) = **first_mut_ref;
-	        	next as *mut Option<Box<AST>>
+	fn pop(&mut self) -> Option<Arith> {
+		match self.root.take() {
+			None => None, 
 
-	        	//now after the cast to a raw pointer
-	        	//we have droped the first_mut_ref
-	        	//this means it is now safe to cast back to a mut ref
-	        };
-	        
-	        
-	        //note that this also gets around the lifetime requirment of 'a
-	        //which means that we do have potential for stale refrences if we ever start droping things.
-	        self.cur_statement = Some(&mut *next);
-    	}
+			Some(mut x) =>{
+				let AST::Statement(ans, ref mut next) = *x;
+				match next.take() {
+					None => {
+						self.root=None;
+						self.cur_statement=None;
+					},
+					Some(s) =>
+						self.root=Some(s),
+				};
+				Some(ans)
+			}
+		}
 	}
 }
 
@@ -314,13 +325,16 @@ pub fn make_ast<R: Read>(mut lex: Lexer<R>) -> Result<AST, LineParseErrors> {
     let mut data = ParserData::new();
     let mut errors = Vec::new();
 
-    loop {
+    	
+	loop {
         match make_arith(&mut lex, &mut data) {
-            Ok(Some(arith)) => data.append(arith),
+            Ok(Some(arith)) => {data.append(arith)},
             Ok(None) => break,
             Err(errs) => errors.extend(errs),
         }
     }
+    
+    
 
     if !errors.is_empty() {
         return Err(LineParseErrors(errors));
