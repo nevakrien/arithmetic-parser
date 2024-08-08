@@ -211,24 +211,25 @@ impl<'a> ParserData<'a>  {
     	
 	}
 
-	fn pop(&mut self) -> Option<Arith> {
-		match self.root.take() {
-			None => None, 
+	//not needed
+	// fn pop(&mut self) -> Option<Arith> {
+	// 	match self.root.take() {
+	// 		None => None, 
 
-			Some(mut x) =>{
-				let AST::Statement(ans, ref mut next) = *x;
-				match next.take() {
-					None => {
-						self.root=None;
-						self.cur_statement=None;
-					},
-					Some(s) =>
-						self.root=Some(s),
-				};
-				Some(ans)
-			}
-		}
-	}
+	// 		Some(mut x) =>{
+	// 			let AST::Statement(ans, ref mut next) = *x;
+	// 			match next.take() {
+	// 				None => {
+	// 					self.root=None;
+	// 					self.cur_statement=None;//not strictly needed but ensures safety
+	// 				},
+	// 				Some(s) =>
+	// 					self.root=Some(s),
+	// 			};
+	// 			Some(ans)
+	// 		}
+	// 	}
+	// }
 }
 
 fn make_arith<R: Read>(lex: &mut Lexer<R>, data: &mut ParserData) -> Result<Option<Arith>, Vec<LineParseError>> {
@@ -238,7 +239,10 @@ fn make_arith<R: Read>(lex: &mut Lexer<R>, data: &mut ParserData) -> Result<Opti
     while let Some(token) = lex.next() {
         match token {
             Token::Line(l) => data.line = l,
-            Token::OpenPar => data.par_count += 1,
+            Token::OpenPar => {
+            	data.par_count += 1;
+            	todo!("actually handle this");
+            }, 
             Token::ClosePar => {
                 if data.par_count == 0 {
                     errors.push(LineParseError {
@@ -255,6 +259,9 @@ fn make_arith<R: Read>(lex: &mut Lexer<R>, data: &mut ParserData) -> Result<Opti
                 match translate_num(s) {
                     Ok(num) => {
                         data.build_state = Some(Box::new(BuildArith::Num(num)));
+                        
+                        todo!("handle the case where we have an open pair");
+
                         match actualize_arith(*data.build_state.take().unwrap()) {
                             Ok(arith) => result = Some(arith),
                             Err(err) => {
@@ -274,24 +281,28 @@ fn make_arith<R: Read>(lex: &mut Lexer<R>, data: &mut ParserData) -> Result<Opti
                 }
             }
             Token::Plus => {
+            	todo!("handle the case where we have ANOTHER open pair");
                 data.build_state = Some(Box::new(BuildArith::Add(
                     data.build_state.take(),
                     None,
                 )));
             }
             Token::Minus => {
+            	todo!("handle the case where we have ANOTHER open pair");
                 data.build_state = Some(Box::new(BuildArith::Sub(
                     data.build_state.take(),
                     None,
                 )));
             }
             Token::Mul => {
+            	todo!("handle the case where we have ANOTHER open pair");
                 data.build_state = Some(Box::new(BuildArith::Mul(
                     data.build_state.take(),
                     None,
                 )));
             }
             Token::Div => {
+            	todo!("handle the case where we have ANOTHER open pair");
                 data.build_state = Some(Box::new(BuildArith::Div(
                     data.build_state.take(),
                     None,
@@ -342,7 +353,8 @@ pub fn make_ast<R: Read>(mut lex: Lexer<R>) -> Result<AST, LineParseErrors> {
 
     if let Some(root) = data.root {
         Ok(*root)
-    } else {
+    } 
+    else {
         errors.push(LineParseError {
             error: ParseError::EmptyTree,
             line: data.line,
