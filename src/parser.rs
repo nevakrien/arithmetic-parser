@@ -37,7 +37,7 @@ impl Error for LineParseError {}
 pub enum ParseError {
     InvalidNumber(String),
     UnexpectedToken(Token),
-    UnexpectedEOF,
+    EmptyParenthesis,
     UnmatchedParenthesis,
     PartialArith(BuildArith),
 
@@ -53,7 +53,7 @@ impl fmt::Display for ParseError {
             ParseError::UnexpectedToken(token) => {
                 write!(f, "Unexpected token {:?}", token)
             }
-            ParseError::UnexpectedEOF => write!(f, "Unexpected end of file"),
+            ParseError::EmptyParenthesis => write!(f, "( ) is not a valid expression"),
             ParseError::UnmatchedParenthesis => {
                 write!(f, "Unmatched parenthesis")
             }
@@ -91,6 +91,7 @@ fn translate_num(s: String) -> Result<Number, ParseError> {
     }
 }
 
+#[derive(Debug)]
 pub enum Arith {
     Num(Number),
     Add(Box<Arith>, Box<Arith>),
@@ -101,6 +102,7 @@ pub enum Arith {
 
 #[derive(Debug)]
 enum BuildArith {
+    Made(Arith),
     Num(Number),
     Add(Option<Box<BuildArith>>, Option<Box<BuildArith>>),
     Sub(Option<Box<BuildArith>>, Option<Box<BuildArith>>),
@@ -111,6 +113,7 @@ enum BuildArith {
 impl fmt::Display for BuildArith {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            BuildArith::Made(a) => todo!("add print for arith and put it here"),
             BuildArith::Num(n) => write!(f, "Number: {:?}", n),
             BuildArith::Add(a, b) => write!(f, "Addition: {}, {}", a.as_ref().map(|x| x.show()).unwrap_or("[MISSING]".to_string()), b.as_ref().map(|x| x.show()).unwrap_or("[MISSING]".to_string())),
             BuildArith::Sub(a, b) => write!(f, "Subtraction: {}, {}", a.as_ref().map(|x| x.show()).unwrap_or("[MISSING]".to_string()), b.as_ref().map(|x| x.show()).unwrap_or("[MISSING]".to_string())),
@@ -146,6 +149,7 @@ macro_rules! actualize_operation {
 
 fn actualize_arith(build: BuildArith) -> Result<Arith, ParseError> {
     match build {
+        BuildArith::Made(a) => Ok(a),
         BuildArith::Num(n) => Ok(Arith::Num(n)),
         BuildArith::Add(mut a,mut b) => actualize_operation!(Add, a.take(), b.take()),
         BuildArith::Sub(mut a,mut b) => actualize_operation!(Sub, a.take(), b.take()),
@@ -154,25 +158,21 @@ fn actualize_arith(build: BuildArith) -> Result<Arith, ParseError> {
     }
 }
 
-
-
-pub enum AST {
-    Statement(Arith, Option<Box<AST>>),
+struct AST {
+    states : Vec<Arith>,
 }
 
-struct ParserData<'a> {
-    root: Option<Box<AST>>,
-    cur_statement: Option<&'a mut Option<Box<AST>>>, //unsafe when root is non (automatic reset in pop)
+struct ParserData{
+    storage : Vec<Arith>,
     line: u32,
     par_count: u32,
     build_state: Option<Box<BuildArith>>,
 }
 
-impl<'a> ParserData<'a>  {
+impl ParserData  {
     fn new() -> Self {
         ParserData {
-            root: None,
-            cur_statement: None,
+            storage: Vec::new(),
             line: 0,
             par_count: 0,
             build_state: None,
@@ -180,56 +180,8 @@ impl<'a> ParserData<'a>  {
     }
 
     fn append(&mut self,x:Arith ) {
-    	let new_node = Box::new(AST::Statement(x, None));
-
-    	match self.cur_statement.as_mut() {
-    		Some(n) => {
-    			assert!(n.is_none());
-    			**n=Some(new_node);
-    		}
-
-    		None => {
-    			assert!(self.root.is_none());
-	    		self.root=Some(new_node);
-	    		
-	    		unsafe{
-	    			//getting around the 'a  lifetime requirment
-	    			let p = (&mut self.root) as *mut Option<Box<AST>>;
-	    			self.cur_statement=Some(&mut *p);
-    			}
-	    	}
-	    		
-    	}
-        let next = {
-        	let first_mut_ref = self.cur_statement.take().unwrap().as_mut().unwrap();
-        	let AST::Statement(_, ref mut next) = **first_mut_ref;
-        	next
-
-        };
-
-        self.cur_statement = Some(next);
-    	
+        self.storage.push(x);
 	}
-
-	//not needed
-	// fn pop(&mut self) -> Option<Arith> {
-	// 	match self.root.take() {
-	// 		None => None, 
-
-	// 		Some(mut x) =>{
-	// 			let AST::Statement(ans, ref mut next) = *x;
-	// 			match next.take() {
-	// 				None => {
-	// 					self.root=None;
-	// 					self.cur_statement=None;//not strictly needed but ensures safety
-	// 				},
-	// 				Some(s) =>
-	// 					self.root=Some(s),
-	// 			};
-	// 			Some(ans)
-	// 		}
-	// 	}
-	// }
 }
 
 fn make_arith<R: Read>(lex: &mut Lexer<R>, data: &mut ParserData) -> Result<Option<Arith>, Vec<LineParseError>> {
@@ -241,7 +193,19 @@ fn make_arith<R: Read>(lex: &mut Lexer<R>, data: &mut ParserData) -> Result<Opti
             Token::Line(l) => data.line = l,
             Token::OpenPar => {
             	data.par_count += 1;
-            	todo!("actually handle this");
+
+                let par_arith = make_arith(lex,data);
+                match par_arith {
+                    Err(ers) => errors.extend(ers),
+                    Ok(opa) => match opa {
+                        None => errors.push(LineParseError {
+                                    error: ParseError::EmptyParenthesis,
+                                    line: data.line,
+                                }),
+                        Some(ari) => {todo!("actually handle this");},
+                    } 
+
+                };
             }, 
             Token::ClosePar => {
                 if data.par_count == 0 {
@@ -252,16 +216,18 @@ fn make_arith<R: Read>(lex: &mut Lexer<R>, data: &mut ParserData) -> Result<Opti
                     break;
                 }
                 data.par_count -= 1;
+                break;
             }
-            Token::Ender => break,
+            Token::Ender =>  break,
             Token::Comment(_) => continue,
             Token::Num(s) => {
                 match translate_num(s) {
                     Ok(num) => {
-                        data.build_state = Some(Box::new(BuildArith::Num(num)));
-                        
-                        todo!("handle the case where we have an open pair");
+                         todo!("handle the case where we have an open pair");
 
+                        data.build_state = Some(Box::new(BuildArith::Num(num)));
+
+                        //shared logic
                         match actualize_arith(*data.build_state.take().unwrap()) {
                             Ok(arith) => result = Some(arith),
                             Err(err) => {
@@ -317,6 +283,8 @@ fn make_arith<R: Read>(lex: &mut Lexer<R>, data: &mut ParserData) -> Result<Opti
         }
     }
 
+    todo!("handle the break outs...");
+
     if data.par_count > 0 {
         errors.push(LineParseError {
             error: ParseError::UnmatchedParenthesis,
@@ -351,14 +319,13 @@ pub fn make_ast<R: Read>(mut lex: Lexer<R>) -> Result<AST, LineParseErrors> {
         return Err(LineParseErrors(errors));
     }
 
-    if let Some(root) = data.root {
-        Ok(*root)
-    } 
-    else {
+    if data.storage.is_empty() {
         errors.push(LineParseError {
             error: ParseError::EmptyTree,
             line: data.line,
         });
-        Err(LineParseErrors(errors))
+        return Err(LineParseErrors(errors));
     }
+
+    return Ok(AST{states: data.storage});
 }
