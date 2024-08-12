@@ -162,39 +162,186 @@ struct AST {
     states : Vec<Arith>,
 }
 
-struct ParserData{
-    storage : Vec<Arith>,
-    line: u32,
-    par_count: u32,
-    build_state: Option<Box<BuildArith>>,
-}
-
-impl ParserData  {
-    fn new() -> Self {
-        ParserData {
-            storage: Vec::new(),
-            line: 0,
-            par_count: 0,
-            build_state: None,
-        }
-    }
-
-    fn append(&mut self,x:Arith ) {
-        self.storage.push(x);
+fn is_binary_op(tok :&Token) -> bool{
+	match tok {
+		Token::Plus  => true,
+        Token::Minus => true,
+        Token::Mul => true,
+        Token::Div => true,
+        other => false
 	}
 }
 
-fn make_arith<R: Read>(lex: &mut Lexer<R>, data: &mut ParserData) -> Result<Option<Arith>, Vec<LineParseError>> {
+fn is_binary_arith(tok :&Arith) -> bool{
+	match tok {
+		Arith::Num(_) =>false,
+        other => true
+	}
+}
+
+
+fn is_binary_build_arith(tok :&BuildArith) -> bool{
+	match tok {
+		BuildArith::Made(x)=>is_binary_arith(&x),
+		BuildArith::Num(_) =>false,
+        other => true
+	}
+}
+
+
+struct ParserData<R: Read>{
+
+
+    line: u32,
+    par_count: u32,
+    build_state: Option<Box<BuildArith>>,
+
+    lex: Lexer<R>,
+    next_token : Option<Token>,
+}
+
+impl<R: Read> ParserData<R>  {
+    fn new(mut lex: Lexer<R>,) -> Self {
+        let next_token=lex.next();
+        
+        ParserData {
+            // storage: Vec::new(),
+            line: 0,
+            par_count: 0,
+            build_state: None,
+
+            lex :lex,
+            next_token:next_token ,
+        }
+    }
+
+	fn open_pair(&self) ->bool {
+		match &self.next_token {
+			None => false,
+			Some(tok) => is_binary_op(tok),
+		}
+	}
+
+	fn handle_add(&mut self,x:BuildArith ) -> Option<BuildArith> {
+		match self.build_state.take(){
+			None=> {
+				if !is_binary_build_arith(&x) {
+					return Some(x);
+				}
+				else {
+					self.build_state=Some(Box::<BuildArith>::new(x));
+					return None;
+				}
+			}
+
+			Some(mut z) => {
+				if !is_binary_build_arith(&z) || matches!(*z, BuildArith::Made(_)) {
+					self.build_state=Some(Box::<BuildArith>::new(x));
+					return Some(*z);
+				}
+
+				let mut cur = &mut z;
+				
+				loop {
+				    match cur.as_mut() {
+				        // If we encounter a completed arithmetic operation or a number, we can't go further.
+				        // We should place x as the new build state and return the current `z`.
+				        BuildArith::Made(_) | BuildArith::Num(_) => {
+				            self.build_state = Some(Box::<BuildArith>::new(x));
+				            return Some(*z);
+				        },
+
+				        // If we encounter an Add, continue moving to the right.
+				        BuildArith::Add(_, Some(ref mut right)) => {
+				            cur = right;
+				        },
+
+				        // If the right side of the Add is open, place x there and return None.
+				        BuildArith::Add(_, ref mut right) => {
+				            *right = Some(Box::new(x));
+				            return None;
+				        },
+
+				        // If we encounter a Sub, continue moving to the right.
+				        BuildArith::Sub(_, Some(ref mut right)) => {
+				            cur = right;
+				        },
+
+				        // If the right side of the Sub is open, place x there and return None.
+				        BuildArith::Sub(_, ref mut right) => {
+				            *right = Some(Box::new(x));
+				            return None;
+				        },
+
+				        // If we encounter a Mul, continue moving to the right.
+				        BuildArith::Mul(_, Some(ref mut right)) => {
+				            cur = right;
+				        },
+
+				        // If the right side of the Mul is open, place x there and return None.
+				        BuildArith::Mul(_, ref mut right) => {
+				            *right = Some(Box::new(x));
+				            return None;
+				        },
+
+				        // If we encounter a Div, continue moving to the right.
+				        BuildArith::Div(_, Some(ref mut right)) => {
+				            cur = right;
+				        },
+
+				        // If the right side of the Div is open, place x there and return None.
+				        BuildArith::Div(_, ref mut right) => {
+				            *right = Some(Box::new(x));
+				            return None;
+				        },
+				    }
+				}
+
+			}
+		}
+	}
+}
+
+impl<R: Read> Iterator for ParserData<R> {
+	type Item = Token;
+
+	fn next(&mut self) -> Option<Self::Item> {
+		match self.next_token.take() {
+			Some(tok) => {
+				self.next_token = self.lex.next();
+				Some(tok)
+			},
+			None => None
+		}
+		
+	}
+}
+
+macro_rules! pair_op_handle{
+	($op:ident,$data:expr) =>{
+		{
+        	todo!("handle the case where we have ANOTHER open pair");
+            $data.build_state = Some(Box::new(BuildArith::$op(
+                $data.build_state.take(),
+                None,
+            )));
+        }
+	}
+}
+
+//need to check if the next arith happens to be a binary operation
+
+fn make_arith<R: Read>(data: &mut ParserData<R>) -> Result<Option<Arith>, Vec<LineParseError>> {
     let mut result = None;
     let mut errors = Vec::new();
 
-    while let Some(token) = lex.next() {
+    while let Some(token) = data.next() {
         match token {
             Token::Line(l) => data.line = l,
             Token::OpenPar => {
             	data.par_count += 1;
 
-                let par_arith = make_arith(lex,data);
+                let par_arith = make_arith(data);
                 match par_arith {
                     Err(ers) => errors.extend(ers),
                     Ok(opa) => match opa {
@@ -221,14 +368,14 @@ fn make_arith<R: Read>(lex: &mut Lexer<R>, data: &mut ParserData) -> Result<Opti
             Token::Ender =>  break,
             Token::Comment(_) => continue,
             Token::Num(s) => {
+            	//WRONG!!!!
                 match translate_num(s) {
                     Ok(num) => {
-                         todo!("handle the case where we have an open pair");
-
-                        data.build_state = Some(Box::new(BuildArith::Num(num)));
-
-                        //shared logic
-                        match actualize_arith(*data.build_state.take().unwrap()) {
+                        let ar = data.handle_add(BuildArith::Num(num));
+                        if ar.is_none() {
+                        	continue;
+                        }
+                        match actualize_arith(ar.unwrap()) {
                             Ok(arith) => result = Some(arith),
                             Err(err) => {
                                 errors.push(LineParseError {
@@ -246,34 +393,11 @@ fn make_arith<R: Read>(lex: &mut Lexer<R>, data: &mut ParserData) -> Result<Opti
                     }
                 }
             }
-            Token::Plus => {
-            	todo!("handle the case where we have ANOTHER open pair");
-                data.build_state = Some(Box::new(BuildArith::Add(
-                    data.build_state.take(),
-                    None,
-                )));
-            }
-            Token::Minus => {
-            	todo!("handle the case where we have ANOTHER open pair");
-                data.build_state = Some(Box::new(BuildArith::Sub(
-                    data.build_state.take(),
-                    None,
-                )));
-            }
-            Token::Mul => {
-            	todo!("handle the case where we have ANOTHER open pair");
-                data.build_state = Some(Box::new(BuildArith::Mul(
-                    data.build_state.take(),
-                    None,
-                )));
-            }
-            Token::Div => {
-            	todo!("handle the case where we have ANOTHER open pair");
-                data.build_state = Some(Box::new(BuildArith::Div(
-                    data.build_state.take(),
-                    None,
-                )));
-            }
+            Token::Plus => pair_op_handle!(Add,data),
+            Token::Minus => pair_op_handle!(Sub,data),
+            Token::Mul => pair_op_handle!(Mul,data),
+            Token::Div => pair_op_handle!(Div,data),
+            
             other => {
                 errors.push(LineParseError {
                     error: ParseError::UnexpectedToken(other),
@@ -283,8 +407,6 @@ fn make_arith<R: Read>(lex: &mut Lexer<R>, data: &mut ParserData) -> Result<Opti
         }
     }
 
-    todo!("handle the break outs...");
-
     if data.par_count > 0 {
         errors.push(LineParseError {
             error: ParseError::UnmatchedParenthesis,
@@ -293,7 +415,26 @@ fn make_arith<R: Read>(lex: &mut Lexer<R>, data: &mut ParserData) -> Result<Opti
     }
 
     if errors.is_empty() {
-        Ok(result)
+        match result {
+        	Some(_) => Ok(result),
+        	None => {
+        		let last = data.build_state.take().unwrap_or({
+        			return Ok(None);
+        		});
+
+        		match actualize_arith(*last) {
+        			Ok(arith) => Ok(Some(arith)),
+                    Err(err) => {
+                        errors.push(LineParseError {
+                            error: err,
+                            line: data.line,
+                        });
+
+                        return Err(errors);
+                    }
+        		}
+        	}
+        }
     } else {
         Err(errors)
     }
@@ -301,25 +442,23 @@ fn make_arith<R: Read>(lex: &mut Lexer<R>, data: &mut ParserData) -> Result<Opti
 
 
 pub fn make_ast<R: Read>(mut lex: Lexer<R>) -> Result<AST, LineParseErrors> {
-    let mut data = ParserData::new();
+    let mut data = ParserData::new(lex);
+    let mut ans = Vec::new();
     let mut errors = Vec::new();
-
     	
 	loop {
-        match make_arith(&mut lex, &mut data) {
-            Ok(Some(arith)) => {data.append(arith)},
+        match make_arith(&mut data) {
+            Ok(Some(arith)) => {ans.push(arith)},
             Ok(None) => break,
             Err(errs) => errors.extend(errs),
         }
     }
-    
-    
 
     if !errors.is_empty() {
         return Err(LineParseErrors(errors));
     }
 
-    if data.storage.is_empty() {
+    if ans.is_empty() {
         errors.push(LineParseError {
             error: ParseError::EmptyTree,
             line: data.line,
@@ -327,5 +466,5 @@ pub fn make_ast<R: Read>(mut lex: Lexer<R>) -> Result<AST, LineParseErrors> {
         return Err(LineParseErrors(errors));
     }
 
-    return Ok(AST{states: data.storage});
+    return Ok(AST{states: ans});
 }

@@ -9,3 +9,6 @@ path = "src/lib.rs"  # Path to the main library source file
 
 [dependencies]
 char_reader = "0.1.1"
+
+[profile.dev]
+sanitize = ["address"]
