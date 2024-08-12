@@ -26,6 +26,14 @@ pub struct Lexer<R :Read>{
 }
 
 impl<R :Read> Lexer<R> {
+	pub fn new(input: R) -> Self {
+        Lexer {
+            iter: CharReader::new(input),
+            cur_c: None,
+            line_num: 0,
+        }
+    }
+
 	pub fn line(&self) -> u32 {
 		return self.line_num;
 	}
@@ -111,43 +119,30 @@ impl<R :Read> Iterator for Lexer<R> {
 	}
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::io::Cursor;
-    use ::char_reader::CharReader;
 
-    fn create_lexer(input: &str) -> Lexer<Cursor<&str>> {
-        Lexer {
-            iter: CharReader::new(Cursor::new(input)),
-            cur_c: None,
-            line_num :0,
-        }
-    }
 
-    #[test]
-    fn test_lexer() {
-        let input = "+ - / * ; # this is a comment\n  \n 123 jjunkkk 456.78 ()";
-        let mut lexer = create_lexer(input);
+#[test]
+fn test_lexer() {
+    let input = "+ - / * ; # this is a comment\n  \n 123 jjunkkk 456.78 ()";
+    let mut lexer = Lexer::new(std::io::Cursor::new(input));
 
-        let tokens: Vec<Token> = lexer.by_ref().collect();
+    let tokens: Vec<Token> = lexer.by_ref().collect();
 
-        assert_eq!(tokens.len(), 12);
-        assert_eq!(tokens[0], Token::Plus);
-        assert_eq!(tokens[1], Token::Minus);
-        assert_eq!(tokens[2], Token::Div);
-        assert_eq!(tokens[3], Token::Mul);
-        assert_eq!(tokens[4], Token::Ender);
-        assert_eq!(tokens[5], Token::Comment(" this is a comment".to_string()));
-        assert_eq!(tokens[6], Token::Line(2));
-        
-        assert_eq!(tokens[7], Token::Num("123".to_string()));
-        
+    assert_eq!(tokens.len(), 12);
+    assert_eq!(tokens[0], Token::Plus);
+    assert_eq!(tokens[1], Token::Minus);
+    assert_eq!(tokens[2], Token::Div);
+    assert_eq!(tokens[3], Token::Mul);
+    assert_eq!(tokens[4], Token::Ender);
+    assert_eq!(tokens[5], Token::Comment(" this is a comment".to_string()));
+    assert_eq!(tokens[6], Token::Line(2));
+    
+    assert_eq!(tokens[7], Token::Num("123".to_string()));
+    
 
-        assert_eq!(tokens[8], Token::Unknowen("jjunkkk".to_string()));
-        assert_eq!(tokens[9], Token::Num("456.78".to_string()));
+    assert_eq!(tokens[8], Token::Unknowen("jjunkkk".to_string()));
+    assert_eq!(tokens[9], Token::Num("456.78".to_string()));
 
-         assert_eq!(tokens[10], Token::OpenPar);
-         assert_eq!(tokens[11], Token::ClosePar);
-    }
+     assert_eq!(tokens[10], Token::OpenPar);
+     assert_eq!(tokens[11], Token::ClosePar);
 }
