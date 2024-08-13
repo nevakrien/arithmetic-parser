@@ -19,21 +19,21 @@ impl LineParseErrors {
         self.0.push(error);
     }
 
-    pub fn extend(&mut self, error: LineParseErrors) {
-        self.0.extend(error.0);
-    }
+    // pub fn extend(&mut self, error: LineParseErrors) {
+    //     self.0.extend(error.0);
+    // }
 
-    pub fn len(&self) -> usize {
-        self.0.len()
-    }
+    // pub fn len(&self) -> usize {
+    //     self.0.len()
+    // }
 
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
 
-    pub fn get(&self, index: usize) -> Option<&LineParseError> {
-        self.0.get(index)
-    }
+    // pub fn get(&self, index: usize) -> Option<&LineParseError> {
+    //     self.0.get(index)
+    // }
     
     // You can add more methods as needed to fully wrap the Vec functionality
 }
@@ -80,9 +80,11 @@ pub enum ParseError {
     EmptyParenthesis,
     UnmatchedParenthesis,
 
-    NoEnd,
+    OpenOp(Optype),
+    ExpectedOp,
+    DoubleOp(Optype,Optype),
 
-    Other(Box<dyn Error>),
+    NoEnd,
 }
 
 impl fmt::Display for ParseError {
@@ -97,9 +99,11 @@ impl fmt::Display for ParseError {
                 write!(f, "Unmatched parenthesis")
             }
 
-            ParseError::NoEnd => write!(f, "expected ;"),
+            ParseError::OpenOp(x) => write!(f, "expected to have ? {} ?",x),
+            ParseError::ExpectedOp  => write!(f,"expected +-/* found value type instead"),
+            ParseError::DoubleOp(a,b) => write!(f, "found {}{} expected to have ? [op] ?",a,b),
 
-            ParseError::Other(err) => write!(f, "Other error: {}", err),
+            ParseError::NoEnd => write!(f, "expected ;"),
         }
     }
 }
@@ -329,6 +333,7 @@ fn test_no_end() {
 
 
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub enum Number {
     Float(f64),
@@ -347,6 +352,7 @@ fn translate_num(s: String) -> Result<Number, ParseError> {
     }
 }
 
+#[derive(Debug,PartialEq)]
 pub enum Optype {
 	Add,
 	Sub,
@@ -354,37 +360,40 @@ pub enum Optype {
 	Div,
 }
 
+impl fmt::Display for Optype {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+	        match self {
+	        	Optype::Add => write!(f,"+"),
+	        	Optype::Sub => write!(f,"-"),
+	        	Optype::Mul => write!(f,"*"),
+	        	Optype::Div => write!(f,"/"),
+	        }
+	}
+}
+
+#[allow(dead_code)]
 pub enum ArNode {
 	Op(BinaryOp),
 	Num(Number),
 }
 
-
+#[allow(dead_code)]
 pub struct BinaryOp {
 	left :Box<ArNode>,
 	right: Box<ArNode>,
 	action :Optype
 }
 
-// fn is_value (x:ParExpr) -> bool {
-// 	match x {
-// 		ParExpr::Leaf(t) => match t {
-// 			Token::Num(_) => true,
-// 			_ => false,
-// 		}
-// 		ParExpr::Exp(_) => true,
-// 	}
-// }
-
 #[allow(dead_code)]
 pub fn next_statment<R:Read>(lex : &mut Lexer<R>) -> Result<Option<ArNode>,LineParseErrors> {
 	let l=lex.line();
+	let mut errors = LineParseErrors::new();
 
 	match gather_statement(lex) {
-		Ok(Some(mut x)) => {
-			match _next_statment(x,l) {
+		Ok(Some(x)) => {
+			match _next_statment(x,l,&mut errors) {
 				Ok(v) => Ok(Some(v)),
-				Err(e) => Err(e),
+				Err(()) => Err(errors),
 			}
 		},  
 		Ok(None) => Ok(None),
@@ -392,53 +401,278 @@ pub fn next_statment<R:Read>(lex : &mut Lexer<R>) -> Result<Option<ArNode>,LineP
 	}
 }
 
-fn swap_vec(mut x: Vec<ParExpr>, i: usize) -> ParExpr {
-    let ans = std::mem::replace(&mut x[i], ParExpr::Leaf(Token::Ender));
-    ans
-}
+fn _next_statment(vec:Vec<ParExpr>,line: u32,errors: &mut LineParseErrors) ->  Result<ArNode,()> {
+	let mut m = vec.into_iter().map(|x| recurse_map(x,line,errors));
+	
+	let mut cur = match m.next() {
+		None => {
+			errors.push(LineParseError::new(ParseError::EmptyParenthesis,line));
+			return Err(());
+		}
+		Some(res) => match res {
+			MapResult::Value(v) => v,
+			MapResult::Err => {return Err(());},
+			MapResult::Op(o) => {
+				errors.push(LineParseError::new(
+					ParseError::OpenOp(o),
+					line)
+				);
+				return Err(());
+			},
+		}
+	};
 
+	while let Some(r) = m.next() {
+		match r {
+			MapResult::Err => {return Err(());},
+			MapResult::Value(_) => {
+				errors.push(LineParseError::new(
+					ParseError::ExpectedOp,
+					line)
+				);
+				return Err(());
+			}
+			MapResult::Op(op) => {
+				let next=m.next();
+				if next.is_none() {
+					errors.push(LineParseError::new(
+						ParseError::OpenOp(op),
+						line)
+					);
+					return Err(());
+				}
 
-fn _next_statment(x:Vec<ParExpr>,line: u32) -> Result<ArNode,LineParseErrors> {
-	let mut errors = LineParseErrors::new();
-
-	if x.is_empty() {
-		errors.push(LineParseError::new(ParseError::EmptyParenthesis,line));
-		return Err(errors);
+				let right = next.unwrap();
+				match right {
+					MapResult::Err => {return Err(())},
+					MapResult::Value(v) => {
+						cur = ArNode::Op(BinaryOp{
+							action:op,
+							left:Box::new(cur),
+							right:Box::new(v)
+						});
+					},
+					MapResult::Op(op2) => {
+						errors.push(LineParseError::new(
+							ParseError::DoubleOp(op,op2),
+							line)
+						);
+						return Err(());
+					}
+				}
+			}
+		}
 	}
 
+	return Ok(cur);
+}
 
-	let first = match swap_vec(x,0){
+enum MapResult {
+	Value(ArNode),
+	Op(Optype),
+	Err
+}
+
+fn recurse_map(input :ParExpr,line: u32,errors: &mut LineParseErrors) -> MapResult {
+	match input{
 		ParExpr::Leaf(tok) => {
 			match tok {
 				Token::Num(s) => match translate_num(s) {
-					Ok(n) => Ok(ArNode::Num(n)),
-					Err(e) => Err(errors.push(LineParseError::new(e,line))),
+					Ok(n) => MapResult::Value(ArNode::Num(n)),
+					Err(e) => {
+						errors.push(LineParseError::new(e,line));
+						MapResult::Err
+					}
 				},
-				other => Err(errors.push(
-					LineParseError::new(
-							ParseError::UnexpectedToken(other),
-							line
-					)
-				)),
+
+				Token::Plus => MapResult::Op(Optype::Add),
+				Token::Minus => MapResult::Op(Optype::Sub),
+				Token::Mul => MapResult::Op(Optype::Mul),
+				Token::Div => MapResult::Op(Optype::Div),
+
+				other => {
+					errors.push(
+						LineParseError::new(
+								ParseError::UnexpectedToken(other),
+								line
+						)
+					);
+					MapResult::Err
+				},
 			}
+		},
+
+		ParExpr::Exp(vec) => match _next_statment(vec,line,errors) {
+			Ok(ar) => MapResult::Value(ar),
+			Err(()) => MapResult::Err
 		}
-		ParExpr::Exp(vec) => match _next_statment(vec,line) {
-			Ok(v) => Ok(v),
-			Err(e) => Err(errors.extend(e))
-		}
-	};
+	}
+}
 
-	let mut cur :ArNode = match first {
-		Err(()) => {return Err(errors);}
-		Ok(v) => v
-	};
+#[test]
+fn test_next_statment_simple_addition() {
+    let input = "123 + 456;";
+    let mut lexer = Lexer::new(std::io::Cursor::new(input));
 
-	// for i in (1..x.len()).step_by(2) {
-	// 	// match x[i] {
-			
-	// 	// }
-	// }
+    let result = next_statment(&mut lexer).unwrap().unwrap();
+    if let ArNode::Op(op) = result {
+        match *op.left {
+            ArNode::Num(Number::Int(n)) => assert_eq!(n, 123),
+            _ => panic!("Expected left operand to be 123"),
+        }
+        assert_eq!(op.action, Optype::Add);
+        match *op.right {
+            ArNode::Num(Number::Int(n)) => assert_eq!(n, 456),
+            _ => panic!("Expected right operand to be 456"),
+        }
+    } else {
+        panic!("Expected an addition operation");
+    }
+}
 
-	todo!()
+#[test]
+fn test_next_statment_nested_operations() {
+    let input = "(123 + 456) * 789;";
+    let mut lexer = Lexer::new(std::io::Cursor::new(input));
 
+    let result = next_statment(&mut lexer).unwrap().unwrap();
+    if let ArNode::Op(op) = result {
+        match *op.left {
+            ArNode::Op(inner_op) => {
+                match *inner_op.left {
+                    ArNode::Num(Number::Int(n)) => assert_eq!(n, 123),
+                    _ => panic!("Expected left operand to be 123"),
+                }
+                assert_eq!(inner_op.action, Optype::Add);
+                match *inner_op.right {
+                    ArNode::Num(Number::Int(n)) => assert_eq!(n, 456),
+                    _ => panic!("Expected right operand to be 456"),
+                }
+            }
+            _ => panic!("Expected an addition operation inside the multiplication"),
+        }
+        assert_eq!(op.action, Optype::Mul);
+        match *op.right {
+            ArNode::Num(Number::Int(n)) => assert_eq!(n, 789),
+            _ => panic!("Expected right operand to be 789"),
+        }
+    } else {
+        panic!("Expected a multiplication operation");
+    }
+}
+
+#[test]
+fn test_next_statment_missing_semicolon() {
+    let input = "123 + 456";
+    let mut lexer = Lexer::new(std::io::Cursor::new(input));
+
+    let result = next_statment(&mut lexer);
+    assert!(result.is_err());
+
+    if let Err(LineParseErrors(errors)) = result {
+        assert_eq!(errors.len(), 1);
+        if let Some(error) = errors.get(0) {
+            assert!(matches!(error.error, ParseError::NoEnd));
+        }
+    } else {
+        panic!("Expected LineParseErrors, got different error type");
+    }
+}
+
+#[test]
+fn test_next_statment_unmatched_parenthesis() {
+    let input = "((123 + 456);";
+    let mut lexer = Lexer::new(std::io::Cursor::new(input));
+
+    let result = next_statment(&mut lexer);
+    assert!(result.is_err());
+
+    if let Err(LineParseErrors(errors)) = result {
+        assert_eq!(errors.len(), 1);
+        if let Some(error) = errors.get(0) {
+            assert!(matches!(error.error, ParseError::UnmatchedParenthesis));
+        }
+    } else {
+        panic!("Expected LineParseErrors, got different error type");
+    }
+}
+
+#[test]
+fn test_deeply_nested_invalid() {
+    let input = "(((((123 + 456) - 789) * 10) / 2) + 5";
+    let mut lexer = Lexer::new(std::io::Cursor::new(input));
+
+    let result = next_statment(&mut lexer);
+    assert!(result.is_err());
+
+    if let Err(LineParseErrors(errors)) = result {
+        assert_eq!(errors.len(), 1);
+        if let Some(error) = errors.get(0) {
+            assert!(matches!(error.error, ParseError::NoEnd));
+        }
+    } else {
+        panic!("Expected LineParseErrors, got different error type");
+    }
+}
+
+#[test]
+fn test_deeply_nested_valid() {
+    let input = "(((((123 + 456) - 789) * 10) / 2) + 5);";
+    let mut lexer = Lexer::new(std::io::Cursor::new(input));
+
+    let result = next_statment(&mut lexer).unwrap().unwrap();
+
+    if let ArNode::Op(op) = result {
+        assert_eq!(op.action, Optype::Add);
+        match *op.left {
+            ArNode::Op(left_op) => {
+                assert_eq!(left_op.action, Optype::Div);
+                match *left_op.left {
+                    ArNode::Op(mul_op) => {
+                        assert_eq!(mul_op.action, Optype::Mul);
+                        match *mul_op.left {
+                            ArNode::Op(sub_op) => {
+                                assert_eq!(sub_op.action, Optype::Sub);
+                                match *sub_op.left {
+                                    ArNode::Op(add_op) => {
+                                        assert_eq!(add_op.action, Optype::Add);
+                                        match *add_op.left {
+                                            ArNode::Num(Number::Int(n)) => assert_eq!(n, 123),
+                                            _ => panic!("Expected left operand to be 123"),
+                                        }
+                                        match *add_op.right {
+                                            ArNode::Num(Number::Int(n)) => assert_eq!(n, 456),
+                                            _ => panic!("Expected right operand to be 456"),
+                                        }
+                                    }
+                                    _ => panic!("Expected an addition operation"),
+                                }
+                                match *sub_op.right {
+                                    ArNode::Num(Number::Int(n)) => assert_eq!(n, 789),
+                                    _ => panic!("Expected right operand to be 789"),
+                                }
+                            }
+                            _ => panic!("Expected a subtraction operation"),
+                        }
+                        match *mul_op.right {
+                            ArNode::Num(Number::Int(n)) => assert_eq!(n, 10),
+                            _ => panic!("Expected right operand to be 10"),
+                        }
+                    }
+                    _ => panic!("Expected a multiplication operation"),
+                }
+                match *left_op.right {
+                    ArNode::Num(Number::Int(n)) => assert_eq!(n, 2),
+                    _ => panic!("Expected right operand to be 2"),
+                }
+            }
+            _ => panic!("Expected a division operation"),
+        }
+        match *op.right {
+            ArNode::Num(Number::Int(n)) => assert_eq!(n, 5),
+            _ => panic!("Expected right operand to be 5"),
+        }
+    } else {
+        panic!("Expected an addition operation");
+    }
 }
