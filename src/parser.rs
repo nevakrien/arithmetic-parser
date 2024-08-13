@@ -19,6 +19,10 @@ impl LineParseErrors {
         self.0.push(error);
     }
 
+    pub fn extend(&mut self, error: LineParseErrors) {
+        self.0.extend(error.0);
+    }
+
     pub fn len(&self) -> usize {
         self.0.len()
     }
@@ -360,4 +364,81 @@ pub struct BinaryOp {
 	left :Box<ArNode>,
 	right: Box<ArNode>,
 	action :Optype
+}
+
+// fn is_value (x:ParExpr) -> bool {
+// 	match x {
+// 		ParExpr::Leaf(t) => match t {
+// 			Token::Num(_) => true,
+// 			_ => false,
+// 		}
+// 		ParExpr::Exp(_) => true,
+// 	}
+// }
+
+#[allow(dead_code)]
+pub fn next_statment<R:Read>(lex : &mut Lexer<R>) -> Result<Option<ArNode>,LineParseErrors> {
+	let l=lex.line();
+
+	match gather_statement(lex) {
+		Ok(Some(mut x)) => {
+			match _next_statment(x,l) {
+				Ok(v) => Ok(Some(v)),
+				Err(e) => Err(e),
+			}
+		},  
+		Ok(None) => Ok(None),
+		Err(e) => Err(e),
+	}
+}
+
+fn swap_vec(mut x: Vec<ParExpr>, i: usize) -> ParExpr {
+    let ans = std::mem::replace(&mut x[i], ParExpr::Leaf(Token::Ender));
+    ans
+}
+
+
+fn _next_statment(x:Vec<ParExpr>,line: u32) -> Result<ArNode,LineParseErrors> {
+	let mut errors = LineParseErrors::new();
+
+	if x.is_empty() {
+		errors.push(LineParseError::new(ParseError::EmptyParenthesis,line));
+		return Err(errors);
+	}
+
+
+	let first = match swap_vec(x,0){
+		ParExpr::Leaf(tok) => {
+			match tok {
+				Token::Num(s) => match translate_num(s) {
+					Ok(n) => Ok(ArNode::Num(n)),
+					Err(e) => Err(errors.push(LineParseError::new(e,line))),
+				},
+				other => Err(errors.push(
+					LineParseError::new(
+							ParseError::UnexpectedToken(other),
+							line
+					)
+				)),
+			}
+		}
+		ParExpr::Exp(vec) => match _next_statment(vec,line) {
+			Ok(v) => Ok(v),
+			Err(e) => Err(errors.extend(e))
+		}
+	};
+
+	let mut cur :ArNode = match first {
+		Err(()) => {return Err(errors);}
+		Ok(v) => v
+	};
+
+	// for i in (1..x.len()).step_by(2) {
+	// 	// match x[i] {
+			
+	// 	// }
+	// }
+
+	todo!()
+
 }

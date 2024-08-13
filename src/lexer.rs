@@ -26,6 +26,7 @@ pub struct Lexer<R :Read>{
 }
 
 impl<R :Read> Lexer<R> {
+	#[allow(dead_code)]
 	pub fn new(input: R) -> Self {
         Lexer {
             iter: CharReader::new(input),
