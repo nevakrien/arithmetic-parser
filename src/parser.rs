@@ -598,7 +598,7 @@ fn test_next_statment_unmatched_parenthesis() {
 }
 
 #[test]
-fn test_deeply_nested_invalid() {
+fn test_deeply_nested_left() {
     let input = "(((((123 + 456) - 789) * 10) / 2) + 5";
     let mut lexer = Lexer::new(std::io::Cursor::new(input));
 
@@ -674,5 +674,99 @@ fn test_deeply_nested_valid() {
         }
     } else {
         panic!("Expected an addition operation");
+    }
+}
+
+#[test]
+fn test_deeply_nested() {
+    let input = "(((123 + 456) * (789 - 10)) / ((20 / 5) + (3 * 2)));";
+    let mut lexer = Lexer::new(std::io::Cursor::new(input));
+
+    let result = next_statment(&mut lexer).unwrap().unwrap();
+
+    if let ArNode::Op(op) = result {
+        assert_eq!(op.action, Optype::Div);
+
+        // Check the left side of the division
+        match *op.left {
+            ArNode::Op(mul_op) => {
+                assert_eq!(mul_op.action, Optype::Mul);
+                
+                // Check the left side of the multiplication
+                match *mul_op.left {
+                    ArNode::Op(add_op) => {
+                        assert_eq!(add_op.action, Optype::Add);
+                        match *add_op.left {
+                            ArNode::Num(Number::Int(n)) => assert_eq!(n, 123),
+                            _ => panic!("Expected left operand to be 123"),
+                        }
+                        match *add_op.right {
+                            ArNode::Num(Number::Int(n)) => assert_eq!(n, 456),
+                            _ => panic!("Expected right operand to be 456"),
+                        }
+                    }
+                    _ => panic!("Expected an addition operation"),
+                }
+
+                // Check the right side of the multiplication
+                match *mul_op.right {
+                    ArNode::Op(sub_op) => {
+                        assert_eq!(sub_op.action, Optype::Sub);
+                        match *sub_op.left {
+                            ArNode::Num(Number::Int(n)) => assert_eq!(n, 789),
+                            _ => panic!("Expected left operand to be 789"),
+                        }
+                        match *sub_op.right {
+                            ArNode::Num(Number::Int(n)) => assert_eq!(n, 10),
+                            _ => panic!("Expected right operand to be 10"),
+                        }
+                    }
+                    _ => panic!("Expected a subtraction operation"),
+                }
+            }
+            _ => panic!("Expected a multiplication operation"),
+        }
+
+        // Check the right side of the division
+        match *op.right {
+            ArNode::Op(add_op) => {
+                assert_eq!(add_op.action, Optype::Add);
+                
+                // Check the left side of the addition
+                match *add_op.left {
+                    ArNode::Op(div_op) => {
+                        assert_eq!(div_op.action, Optype::Div);
+                        match *div_op.left {
+                            ArNode::Num(Number::Int(n)) => assert_eq!(n, 20),
+                            _ => panic!("Expected left operand to be 20"),
+                        }
+                        match *div_op.right {
+                            ArNode::Num(Number::Int(n)) => assert_eq!(n, 5),
+                            _ => panic!("Expected right operand to be 5"),
+                        }
+                    }
+                    _ => panic!("Expected a division operation"),
+                }
+
+                // Check the right side of the addition
+                match *add_op.right {
+                    ArNode::Op(mul_op) => {
+                        assert_eq!(mul_op.action, Optype::Mul);
+                        match *mul_op.left {
+                            ArNode::Num(Number::Int(n)) => assert_eq!(n, 3),
+                            _ => panic!("Expected left operand to be 3"),
+                        }
+                        match *mul_op.right {
+                            ArNode::Num(Number::Int(n)) => assert_eq!(n, 2),
+                            _ => panic!("Expected right operand to be 2"),
+                        }
+                    }
+                    _ => panic!("Expected a multiplication operation"),
+                }
+            }
+            _ => panic!("Expected an addition operation"),
+        }
+    } else {
+        panic!("Expected a division operation");
     }
 }
